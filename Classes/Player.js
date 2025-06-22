@@ -2,13 +2,8 @@ class Player {
     constructor(socketId, pseudo = null) {
       this.socketId = socketId;
       this.pseudo = pseudo || this.generateRandomPseudo();
-      this.whiteDices = 5;//5;
+      this.whiteDices = 5;
       this.redDices = 1;
-
-      // this.asThrownDice = false;
-      // this.asThrownCube = false;
-      // this.asThrownBall = false;
-
       this.throwTries = 3;
     }
   
@@ -45,21 +40,6 @@ class Player {
         return true;
       }
     }
-
-    // asThrownDice() {
-    //   this.asThrownDice = true;
-    //   return this.removeThrowTries();
-    // }
-
-    // asThrownCube() {
-    //   this.asThrownCube = true;
-    //   return this.removeThrowTries();
-    // }
-
-    // asThrownBall() {
-    //   this.asThrownBall = true;
-    //   return this.removeThrowTries();
-    // }
 
     resetThrowTries() {
       this.throwTries = 3;
@@ -119,11 +99,6 @@ class Player {
 
  
     throwDice(color) {
-
-      // if(color === "red"){
-      //   this.throwTries = 1;
-      // }
-
       return this.removeDice(color);
     }
 

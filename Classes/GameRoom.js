@@ -7,7 +7,7 @@ class GameRoom {
     this.currentTurnIndex = 0;
     this.currentStep = 0;
     this.maxStep = 3;
-    this.communCubes = 2//19;
+    this.communCubes = 19;
     this.communBall = 1;
     this.stack = new Stack();
     this.winner = null;

@@ -9,11 +9,16 @@ const Player = require("./Classes/Player");
 const app = express();
 const server = require("http").createServer(app);
 const { Server } = require("socket.io");
+const PORT = process.env.PORT || 3001;
 const io = new Server(3001, {
   cors: {
     origin: "http://localhost:3000",
     methods: ["GET", "POST"],
   },
+});
+
+server.listen(PORT, () => {
+  console.log(`Serveur démarré sur le port ${PORT}`);
 });
 
 // Server static file in the public directory
@@ -391,7 +396,7 @@ io.on("connection", (socket) => {
       remainingTries: currentPlayer.throwTries,
     });
 
-    io.to(roomId).emit("resetItem", { removedItem: removedItem, row: row, col: col, item: item });
+    io.to(roomId).emit("s", { removedItem: removedItem, row: row, col: col, item: item });
 
     // Passer la phase de lancer de balle si lancer la balle ne sert à rien
     if(room.currentStep == 3){
