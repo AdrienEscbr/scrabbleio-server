@@ -10,11 +10,12 @@ const app = express();
 const server = require("http").createServer(app);
 const { Server } = require("socket.io");
 const PORT = process.env.PORT || 3001;
-const io = new Server(3001, {
+const io = new Server(server, {
   cors: {
-    origin: "https://adrienescbr.github.io/dekou-client/",
-    methods: ["GET", "POST"],
+    origin: "https://adrienescbr.github.io/dekou-client",
+    methods: ["GET", "POST"]
   },
+  transports: ["websocket", "polling"]
 });
 
 server.listen(PORT, () => {
