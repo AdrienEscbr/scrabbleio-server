@@ -10,12 +10,19 @@ const app = express();
 const server = require("http").createServer(app);
 const { Server } = require("socket.io");
 const PORT = process.env.PORT || 3001;
+// Configure CORS for Socket.IO (dev + GH Pages by default)
+const defaultOrigins = [
+  "http://localhost:3000",
+  "http://127.0.0.1:3000",
+  "https://adrienescbr.github.io",
+];
+const allowedOrigins = (process.env.CLIENT_ORIGIN ? process.env.CLIENT_ORIGIN.split(",") : defaultOrigins);
 const io = new Server(server, {
   cors: {
-    origin: "https://adrienescbr.github.io/dekou-client",
-    methods: ["GET", "POST"]
+    origin: allowedOrigins,
+    methods: ["GET", "POST"],
   },
-  transports: ["websocket", "polling"]
+  transports: ["websocket", "polling"],
 });
 
 server.listen(PORT, () => {
@@ -23,7 +30,8 @@ server.listen(PORT, () => {
 });
 
 // Server static file in the public directory
-app.use(express.static(path.join(__dirname, "../client/build")));
+app.use(express.static(path.join(__dirname, "../dekou-client/build")));
+app.get("/health", (_req, res) => res.status(200).send("ok"));
 
 // Gestion des rooms
 const rooms = {};
@@ -58,7 +66,7 @@ io.on("connection", (socket) => {
         callback({ success: true, state: room.getState() });
         return;
       }
-      if (room.players.length < 2) {
+      if (room.players.length < room.maxPlayers) {
         const player = new Player(socket.id);
         room.addPlayer(player);
         socket.join(roomId);
@@ -129,8 +137,8 @@ io.on("connection", (socket) => {
   socket.on("launchGame", (roomId, callback) => {
     if (rooms[roomId]) {
       const room = rooms[roomId];
-      if (room.players.length < 2) {
-        callback({ success: false, message: "4 joueurs sont requis pour commencer la partie." });
+      if (room.players.length < room.maxPlayers) {
+        callback({ success: false, message: `${room.maxPlayers} joueurs sont requis pour commencer la partie.` });
         return;
       }
       // Émettre l'événement "gameStarted" à tous les joueurs de la room sauf l'émetteur
