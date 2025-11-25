@@ -224,7 +224,7 @@ io.on("connection", (socket) => {
     if (!room || room.scrabble) return; // already initialized or missing
     if (room.players.length < room.maxPlayers) return;
     try {
-      const dictionaryPath = path.join(__dirname, "../scrabble-server/src/assets/French ODS dictionary.txt");
+      const dictionaryPath = path.join(__dirname, "Assets", "French ODS dictionary.txt");
       const validator = new WordValidatorFile(dictionaryPath);
       const service = new GameService(validator);
       const scrRoom = buildScrRoomFromGameRoom(room);
