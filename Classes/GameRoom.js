@@ -5,7 +5,7 @@ class GameRoom {
     this.currentStep = 0;
     this.winner = null;
     this.looser = null;
-    this.maxPlayers = 2;
+    this.maxPlayers = 4;
   }
 
   addPlayer(player) {

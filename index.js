@@ -4,6 +4,9 @@ const express = require("express");
 // Importer les classes
 const GameRoom = require("./Classes/GameRoom");
 const Player = require("./Classes/Player");
+// Scrabble engine
+const { GameService } = require("./Scrabble/GameService");
+const { WordValidatorFile } = require("./Scrabble/WordValidator");
 
 // make the server and the socketsio
 const app = express();
@@ -35,6 +38,141 @@ app.get("/health", (_req, res) => res.status(200).send("ok"));
 
 // Gestion des rooms
 const rooms = {};
+
+// --- Scrabble helpers ---
+function buildScrRoomFromGameRoom(room) {
+  return {
+    id: room.roomId,
+    hostId: room.players[0]?.socketId,
+    status: 'waiting',
+    maxPlayers: room.maxPlayers,
+    players: room.players.map((p) => ({
+      id: p.socketId,
+      nickname: p.pseudo,
+      connected: true,
+      ready: false,
+      score: 0,
+      rack: [],
+      stats: { wordsPlayed: 0, bestWordScore: 0, bestWord: null, totalTurns: 0, passes: 0 },
+    })),
+    game: null,
+    lastActivityAt: Date.now(),
+  };
+}
+
+function toGameStateSummaryForPlayer(game, players, playerId) {
+  const board = game.board.map((row) =>
+    row.map((c) => ({
+      letter: c.tile ? (c.tile.isJoker ? '?' : (c.tile.letter || undefined)) : undefined,
+      points: c.tile ? c.tile.value : undefined,
+      bonus: c.bonus,
+    }))
+  );
+  const me = players.find((p) => p.id === playerId);
+  const scoresByPlayer = {};
+  for (const p of players) scoresByPlayer[p.id] = p.score;
+  const log = (game.log || []).map((m) => {
+    if (m.action === 'play') {
+      const words = (m.words || []).filter(Boolean).join(', ');
+      return { playerId: m.playerId, action: 'play', summary: `${m.playerId}: ${words} (+${m.score})` };
+    }
+    if (m.action === 'exchange') {
+      return { playerId: m.playerId, action: 'exchange', summary: `${m.playerId}: échange de lettres` };
+    }
+    return { playerId: m.playerId, action: 'pass', summary: `${m.playerId}: passe son tour` };
+  });
+  return {
+    board,
+    myRack: (me?.rack || []).map((t) => ({ tileId: t.id, letter: t.letter, points: t.value })),
+    scoresByPlayer,
+    activePlayerId: game.activePlayerId,
+    turnEndsAt: game.turnEndsAt,
+    turnDurationMs: game.turnDurationMs,
+    bagCount: game.bag.length,
+    log,
+    version: game.version,
+  };
+}
+
+// New version including player nicknames in summaries and players mapping
+function toGameStateSummaryForPlayer2(game, players, playerId) {
+  const board = game.board.map((row) =>
+    row.map((c) => ({
+      letter: c.tile ? (c.tile.isJoker ? '?' : (c.tile.letter || undefined)) : undefined,
+      points: c.tile ? c.tile.value : undefined,
+      bonus: c.bonus,
+    }))
+  );
+  const me = players.find((p) => p.id === playerId);
+  const scoresByPlayer = {};
+  for (const p of players) scoresByPlayer[p.id] = p.score;
+  const nameOf = (pid) => (players.find((pp) => pp.id === pid)?.nickname || pid);
+  const log = (game.log || []).map((m) => {
+    if (m.action === 'play') {
+      const words = (m.words || []).filter(Boolean).join(', ');
+      return { playerId: m.playerId, action: 'play', summary: `${nameOf(m.playerId)}: ${words} (+${m.score})` };
+    }
+    if (m.action === 'exchange') {
+      return { playerId: m.playerId, action: 'exchange', summary: `${nameOf(m.playerId)}: échange de lettres` };
+    }
+    return { playerId: m.playerId, action: 'pass', summary: `${nameOf(m.playerId)}: passe son tour` };
+  });
+  return {
+    board,
+    myRack: (me?.rack || []).map((t) => ({ tileId: t.id, letter: t.letter, points: t.value })),
+    scoresByPlayer,
+    activePlayerId: game.activePlayerId,
+    turnEndsAt: game.turnEndsAt,
+    turnDurationMs: game.turnDurationMs,
+    bagCount: game.bag.length,
+    log,
+    version: game.version,
+    players: players.map((p) => ({ id: p.id, nickname: p.nickname })),
+  };
+}
+
+async function broadcastGameState(roomId) {
+  const room = rooms[roomId];
+  if (!room || !room.scrabble || !room.scrabble.room.game) return;
+  const scr = room.scrabble.room;
+  for (const p of scr.players) {
+    const gs = toGameStateSummaryForPlayer2(scr.game, scr.players, p.id);
+    // Emit personalized state to each player's socket id
+    io.to(p.id).emit('game:state', { roomId, gameState: gs });
+  }
+}
+
+// Auto-advance turn when timer expires (every second)
+setInterval(async () => {
+  try {
+    const now = Date.now();
+    for (const roomId in rooms) {
+      const wrapper = rooms[roomId];
+      if (!wrapper.scrabble) continue;
+      const { room: scr, service } = wrapper.scrabble;
+      const game = scr.game;
+      if (!game) continue;
+      if (now > (game.turnEndsAt || 0)) {
+        const active = game.activePlayerId;
+        try {
+          const { ended } = await service.playMove(scr, active, 'pass');
+          await broadcastGameState(roomId);
+          if (ended) {
+            const scores = {}; const statsByPlayer = {};
+            for (const p of scr.players) { scores[p.id] = p.score; statsByPlayer[p.id] = p.stats; }
+            const max = Math.max(...Object.values(scores));
+            const winnerIds = Object.entries(scores).filter(([, s]) => s === max).map(([id]) => id);
+            io.to(roomId).emit('game:ended', { roomId, scores, statsByPlayer, winnerIds, players: scr.players.map(p => ({ id: p.id, nickname: p.nickname })) });
+          }
+        } catch (e) {
+          console.error('[turnTick] error advancing turn:', e?.message || e);
+        }
+      }
+    }
+  } catch (e) {
+    console.error('[turnTick] loop error:', e?.message || e);
+  }
+}, 1000);
 
 io.on("connection", (socket) => {
   console.log("Un client s'est connecté :", socket.id);
@@ -80,6 +218,24 @@ io.on("connection", (socket) => {
     }
   });
 
+  // Initialize scrabble game state when launching the game (non-intrusive: no callback here)
+  socket.on("launchGame", async (roomId) => {
+    const room = rooms[roomId];
+    if (!room || room.scrabble) return; // already initialized or missing
+    if (room.players.length < room.maxPlayers) return;
+    try {
+      const dictionaryPath = path.join(__dirname, "../scrabble-server/src/assets/French ODS dictionary.txt");
+      const validator = new WordValidatorFile(dictionaryPath);
+      const service = new GameService(validator);
+      const scrRoom = buildScrRoomFromGameRoom(room);
+      room.scrabble = { room: scrRoom, service };
+      service.startNewGame(scrRoom);
+      await broadcastGameState(roomId);
+    } catch (e) {
+      console.error('[launchGame:init] error:', e?.message || e);
+    }
+  });
+
 
   socket.on("leaveRoom", (roomId, callback) => {
     if (rooms[roomId]) {
@@ -107,6 +263,13 @@ io.on("connection", (socket) => {
           callback({ success: true, newPseudo });
           // Diffuser l'état mis à jour à tous les clients de la room
           io.to(roomId).emit("updateState", room.getState());
+          if (room.scrabble) {
+            const sp = room.scrabble.room.players.find(pp => pp.id === socket.id);
+            if (sp) sp.nickname = newPseudo;
+            if (room.scrabble.room.game) {
+              broadcastGameState(roomId);
+            }
+          }
         } else {
           callback({ success: false, message: "Pseudo invalide." });
         }
@@ -158,6 +321,74 @@ io.on("connection", (socket) => {
       return;
     }
     callback({ success: true, state: room.getState() });
+  });
+
+  // --- Scrabble gameplay events ---
+  socket.on('game:getState', (roomId) => {
+    const room = rooms[roomId];
+    if (!room || !room.scrabble || !room.scrabble.room.game) return;
+    const scr = room.scrabble.room;
+    const gs = toGameStateSummaryForPlayer2(scr.game, scr.players, socket.id);
+    socket.emit('game:state', { roomId, gameState: gs });
+  });
+
+  socket.on('game:playMove', async (payload) => {
+    const { roomId, placements } = payload || {};
+    const room = rooms[roomId];
+    if (!room || !room.scrabble) return;
+    const { service, room: scr } = room.scrabble;
+    try {
+      const { ended } = await service.playMove(scr, socket.id, 'play', placements);
+      await broadcastGameState(roomId);
+      if (ended) {
+        const scores = {}; const statsByPlayer = {};
+        for (const p of scr.players) { scores[p.id] = p.score; statsByPlayer[p.id] = p.stats; }
+        const max = Math.max(...Object.values(scores));
+        const winnerIds = Object.entries(scores).filter(([, s]) => s === max).map(([id]) => id);
+        io.to(roomId).emit('game:ended', { roomId, scores, statsByPlayer, winnerIds, players: scr.players.map(p => ({ id: p.id, nickname: p.nickname })) });
+      }
+    } catch (e) {
+      socket.emit('game:error', { roomId, reason: e?.reason || e?.message || 'INVALID_MOVE' });
+    }
+  });
+
+  socket.on('game:pass', async (roomId) => {
+    const room = rooms[roomId];
+    if (!room || !room.scrabble) return;
+    const { service, room: scr } = room.scrabble;
+    try {
+      const { ended } = await service.playMove(scr, socket.id, 'pass');
+      await broadcastGameState(roomId);
+      if (ended) {
+        const scores = {}; const statsByPlayer = {};
+        for (const p of scr.players) { scores[p.id] = p.score; statsByPlayer[p.id] = p.stats; }
+        const max = Math.max(...Object.values(scores));
+        const winnerIds = Object.entries(scores).filter(([, s]) => s === max).map(([id]) => id);
+        io.to(roomId).emit('game:ended', { roomId, scores, statsByPlayer, winnerIds, players: scr.players.map(p => ({ id: p.id, nickname: p.nickname })) });
+      }
+    } catch (e) {
+      socket.emit('game:error', { roomId, reason: e?.reason || e?.message || 'INVALID_MOVE' });
+    }
+  });
+
+  socket.on('game:exchange', async (payload) => {
+    const { roomId, tileIds } = payload || {};
+    const room = rooms[roomId];
+    if (!room || !room.scrabble) return;
+    const { service, room: scr } = room.scrabble;
+    try {
+      const { ended } = await service.playMove(scr, socket.id, 'exchange', undefined, tileIds || []);
+      await broadcastGameState(roomId);
+      if (ended) {
+        const scores = {}; const statsByPlayer = {};
+        for (const p of scr.players) { scores[p.id] = p.score; statsByPlayer[p.id] = p.stats; }
+        const max = Math.max(...Object.values(scores));
+        const winnerIds = Object.entries(scores).filter(([, s]) => s === max).map(([id]) => id);
+        io.to(roomId).emit('game:ended', { roomId, scores, statsByPlayer, winnerIds, players: scr.players.map(p => ({ id: p.id, nickname: p.nickname })) });
+      }
+    } catch (e) {
+      socket.emit('game:error', { roomId, reason: e?.reason || e?.message || 'INVALID_MOVE' });
+    }
   });
 
 
