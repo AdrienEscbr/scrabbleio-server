@@ -17,7 +17,7 @@ const PORT = process.env.PORT || 3001;
 const defaultOrigins = [
   "http://localhost:3000",
   "http://127.0.0.1:3000",
-  "https://adrienescbr.github.io",
+  "https://adrienescbr.github.io/scrabbleio-client",
 ];
 const allowedOrigins = (process.env.CLIENT_ORIGIN ? process.env.CLIENT_ORIGIN.split(",") : defaultOrigins);
 const io = new Server(server, {
