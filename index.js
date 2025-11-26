@@ -222,7 +222,7 @@ io.on("connection", (socket) => {
   socket.on("launchGame", async (roomId) => {
     const room = rooms[roomId];
     if (!room || room.scrabble) return; // already initialized or missing
-    if (room.players.length < room.maxPlayers) return;
+    if (room.players.length < 2) return;
     try {
       const dictionaryPath = path.join(__dirname, "Assets", "French ODS dictionary.txt");
       const validator = new WordValidatorFile(dictionaryPath);
@@ -300,8 +300,8 @@ io.on("connection", (socket) => {
   socket.on("launchGame", (roomId, callback) => {
     if (rooms[roomId]) {
       const room = rooms[roomId];
-      if (room.players.length < room.maxPlayers) {
-        callback({ success: false, message: `${room.maxPlayers} joueurs sont requis pour commencer la partie.` });
+      if (room.players.length < 2) {
+        callback({ success: false, message: `Au moins 2 joueurs sont requis pour commencer la partie.` });
         return;
       }
       // Émettre l'événement "gameStarted" à tous les joueurs de la room sauf l'émetteur
